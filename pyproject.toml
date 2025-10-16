@@ -1,0 +1,26 @@
+[project]
+name = "botman"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=2.3.0",
+    "opencv-python>=4.12.0.88",
+    "pillow>=12.0.0",
+    "playwright>=1.55.0",
+    "pyautogui>=0.9.54",
+    "fastmcp>=0.1.0",
+]
+
+[tool.uv.scripts]
+fastmcp-server = "python -m browserbot.fastmcp_server"
+
+
+[tool.setuptools.packages.find]
+include = [
+    "browserbot",
+    "browserbot.*",
+    "guibot",
+    "guibot.*",
+]
