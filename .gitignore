@@ -1,0 +1,20 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+.env/
+
+# Playwright artifacts
+playwright-report/
+test-results/
+
+# Local state
+browserbot/tmp/
+tmp/
+
+# OS junk
+.DS_Store
+Thumbs.db
