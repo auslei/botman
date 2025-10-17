@@ -106,6 +106,9 @@ class BrowserAgent(AbstractContextManager["BrowserAgent"]):
         for cfg in self._configs.values():
             cfg.session_path.parent.mkdir(parents=True, exist_ok=True)
             cfg.persistent_profile_path.mkdir(parents=True, exist_ok=True)
+        root_dir = Path(__file__).resolve().parent
+        self._download_dir = root_dir / "tmp" / "downloads"
+        self._download_dir.mkdir(parents=True, exist_ok=True)
         self._sessions: Dict[str, _SessionState] = {}
         self._playwright: Optional[Playwright] = None
         self._browser: Optional[Browser] = None
@@ -238,41 +241,85 @@ class BrowserAgent(AbstractContextManager["BrowserAgent"]):
         finally:
             context.close()
 
+    def _collect_links(
+        self,
+        page: Page,
+        *,
+        limit: Optional[int],
+        link_selector: Optional[str],
+        root_selector: Optional[str],
+    ) -> tuple[list[Dict[str, Any]], bool, int]:
+        """Return link metadata from ``page`` and total count."""
+        if root_selector:
+            root = page.query_selector(root_selector)
+            if root is None:
+                return [], False, 0
+            elements = root.query_selector_all(link_selector or "a")
+        else:
+            elements = page.query_selector_all(link_selector or "a")
+        links: list[Dict[str, Any]] = []
+        for position, element in enumerate(elements, start=1):
+            href = element.get_attribute("href") or ""
+            text = (element.inner_text() or "").strip()
+            title_attr = element.get_attribute("title")
+            aria_label = element.get_attribute("aria-label")
+            target = element.get_attribute("target")
+            rel = element.get_attribute("rel")
+            links.append(
+                {
+                    "position": position,
+                    "href": href,
+                    "text": text,
+                    "title": title_attr or None,
+                    "aria_label": aria_label or None,
+                    "target": target or None,
+                    "rel": rel or None,
+                }
+            )
+        total = len(links)
+        truncated = limit is not None and total > limit
+        if truncated:
+            links = links[: limit or total]
+        return links, truncated, total
     def list_links(
         self,
         url: str,
         *,
         wait_until: str = "load",
         limit: Optional[int] = 200,
+        wait_selector: Optional[str] = None,
+        root_selector: Optional[str] = None,
+        link_selector: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Return structured metadata for anchor tags found at ``url``."""
         context, page, error = self._open_page(url, wait_until=wait_until, operation="list_links")
         try:
             if error is not None:
                 return error
-            elements = page.query_selector_all("a")
-            links = []
-            for position, element in enumerate(elements, start=1):
-                href = element.get_attribute("href") or ""
-                text = (element.inner_text() or "").strip()
-                title = element.get_attribute("title")
-                aria_label = element.get_attribute("aria-label")
-                target = element.get_attribute("target")
-                rel = element.get_attribute("rel")
-                link = {
-                    "position": position,
-                    "href": href,
-                    "text": text,
-                    "title": title or None,
-                    "aria_label": aria_label or None,
-                    "target": target or None,
-                    "rel": rel or None,
-                }
-                links.append(link)
-            total = len(links)
-            truncated = limit is not None and total > limit
+            if wait_selector:
+                try:
+                    page.wait_for_selector(wait_selector, timeout=5000)
+                except TimeoutError:
+                    return self._timeout_result(
+                        "list_links",
+                        url=url,
+                        final_url=page.url,
+                        timeout_ms=5000,
+                        phase="wait_selector",
+                    )
+            links, truncated, total = self._collect_links(
+                page,
+                limit=limit,
+                link_selector=link_selector,
+                root_selector=root_selector,
+            )
             if truncated:
-                links = links[: limit or total]
+                if root_selector:
+                    root = page.query_selector(root_selector)
+                    if root is not None:
+                        total = len(root.query_selector_all(link_selector or "a"))
+                else:
+                    total = len(page.query_selector_all(link_selector or "a"))
             return {
                 "final_url": page.url,
                 "title": page.title(),
@@ -282,7 +329,51 @@ class BrowserAgent(AbstractContextManager["BrowserAgent"]):
             }
         finally:
             context.close()
-
+    def session_list_links(
+        self,
+        session_id: str,
+        *,
+        limit: Optional[int] = 200,
+        wait_selector: Optional[str] = None,
+        root_selector: Optional[str] = None,
+        link_selector: Optional[str] = None,
+        timeout_ms: int = 5000,
+    ) -> Dict[str, Any]:
+        """Return structured link metadata for the current session page."""
+        session = self._require_session(session_id)
+        page = session.page
+        if wait_selector:
+            try:
+                page.wait_for_selector(wait_selector, timeout=timeout_ms)
+            except TimeoutError:
+                return self._timeout_result(
+                    "session_list_links",
+                    session_id=session_id,
+                    final_url=page.url,
+                    timeout_ms=timeout_ms,
+                    phase="wait_selector",
+                )
+        links, truncated, total = self._collect_links(
+            page,
+            limit=limit,
+            link_selector=link_selector,
+            root_selector=root_selector,
+        )
+        if truncated:
+            if root_selector:
+                root = page.query_selector(root_selector)
+                if root is not None:
+                    total = len(root.query_selector_all(link_selector or "a"))
+            else:
+                total = len(page.query_selector_all(link_selector or "a"))
+        return {
+            "session_id": session_id,
+            "final_url": page.url,
+            "title": page.title(),
+            "count": total,
+            "links": links,
+            "truncated": truncated,
+        }
     def list_forms(
         self,
         url: str,
@@ -450,6 +541,331 @@ class BrowserAgent(AbstractContextManager["BrowserAgent"]):
             }
         finally:
             context.close()
+
+    def session_type_text(
+        self,
+        session_id: str,
+        selector: str,
+        value: str,
+        *,
+        append: bool = False,
+        delay_ms: Optional[int] = None,
+        submit: bool = False,
+        timeout_ms: int = 5000,
+    ) -> Dict[str, Any]:
+        """Type ``value`` into ``selector`` within an existing session."""
+        session = self._require_session(session_id)
+        page = session.page
+        try:
+            element = page.wait_for_selector(selector, timeout=timeout_ms)
+        except TimeoutError:
+            return self._timeout_result(
+                "session_type_text",
+                session_id=session_id,
+                selector=selector,
+                final_url=page.url,
+                timeout_ms=timeout_ms,
+            )
+        try:
+            if append:
+                element.type(value, delay=delay_ms or 0)
+            else:
+                page.fill(selector, value, timeout=timeout_ms)
+        except TimeoutError:
+            return self._timeout_result(
+                "session_type_text",
+                session_id=session_id,
+                selector=selector,
+                final_url=page.url,
+                timeout_ms=timeout_ms,
+                phase="type",
+            )
+        submitted = False
+        submission_method: Optional[str] = None
+        if submit:
+            try:
+                element.press("Enter", timeout=timeout_ms)
+                submitted = True
+                submission_method = "enter_key"
+            except TimeoutError:
+                return self._timeout_result(
+                    "session_type_text",
+                    session_id=session_id,
+                    selector=selector,
+                    final_url=page.url,
+                    timeout_ms=timeout_ms,
+                    phase="submit",
+                )
+        return {
+            "session_id": session_id,
+            "final_url": page.url,
+            "title": page.title(),
+            "selector": selector,
+            "value": value,
+            "append": append,
+            "submitted": submitted,
+            "submission_method": submission_method,
+        }
+
+    def session_fill_form(
+        self,
+        session_id: str,
+        fields: Union[Mapping[str, str], list[Mapping[str, str]]],
+        *,
+        submit: bool = False,
+        submit_selector: Optional[str] = None,
+        timeout_ms: int = 5000,
+    ) -> Dict[str, Any]:
+        """Fill multiple fields identified by selectors within a session."""
+        session = self._require_session(session_id)
+        page = session.page
+        if isinstance(fields, Mapping):
+            normalized = [{"selector": selector, "value": str(value)} for selector, value in fields.items()]
+        else:
+            normalized = []
+            for entry in fields:
+                selector = entry.get("selector")
+                value = entry.get("value")
+                if not selector:
+                    continue
+                normalized.append({"selector": selector, "value": "" if value is None else str(value)})
+        filled: list[Dict[str, str]] = []
+        skipped: list[Dict[str, str]] = []
+        last_element: Optional[str] = None
+        for entry in normalized:
+            selector = entry["selector"]
+            value = entry["value"]
+            try:
+                page.wait_for_selector(selector, timeout=timeout_ms)
+            except TimeoutError:
+                skipped.append({"selector": selector, "reason": "timeout"})
+                continue
+            try:
+                page.fill(selector, value, timeout=timeout_ms)
+            except TimeoutError:
+                skipped.append({"selector": selector, "reason": "fill_timeout"})
+                continue
+            filled.append({"selector": selector, "value": value})
+            last_element = selector
+        submitted = False
+        submission: Optional[Dict[str, str]] = None
+        if submit:
+            try:
+                if submit_selector:
+                    page.click(submit_selector, timeout=timeout_ms)
+                    submission = {"method": "selector_click", "selector": submit_selector}
+                elif last_element:
+                    page.press(last_element, "Enter", timeout=timeout_ms)
+                    submission = {"method": "enter_key", "selector": last_element}
+                else:
+                    submission = {"method": "noop", "reason": "no_fields_filled"}
+                submitted = submission["method"] != "noop"
+            except TimeoutError:
+                skipped.append(
+                    {
+                        "selector": submit_selector or (last_element or ""),
+                        "reason": "submit_timeout",
+                    }
+                )
+                submission = {"method": "failure", "reason": "timeout"}
+        return {
+            "session_id": session_id,
+            "final_url": page.url,
+            "title": page.title(),
+            "filled": filled,
+            "skipped": skipped,
+            "submitted": submitted,
+            "submission": submission,
+        }
+
+    def session_scroll(
+        self,
+        session_id: str,
+        *,
+        direction: Literal["down", "up", "to_top", "to_bottom"] = "down",
+        amount: int = 1000,
+    ) -> Dict[str, Any]:
+        """Scroll the current session page in the requested direction."""
+        if amount < 0:
+            raise ValueError("amount must be non-negative.")
+        session = self._require_session(session_id)
+        page = session.page
+        direction = direction.lower()
+        if direction not in {"down", "up", "to_top", "to_bottom"}:
+            raise ValueError("direction must be one of {'down', 'up', 'to_top', 'to_bottom'}.")
+        result = page.evaluate(
+            """({ direction, amount }) => {
+                const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+                let targetY = window.scrollY;
+                if (direction === "down") {
+                    targetY = Math.min(window.scrollY + amount, maxY);
+                } else if (direction === "up") {
+                    targetY = Math.max(window.scrollY - amount, 0);
+                } else if (direction === "to_top") {
+                    targetY = 0;
+                } else if (direction === "to_bottom") {
+                    targetY = maxY;
+                }
+                window.scrollTo({ top: targetY, behavior: "auto" });
+                return {
+                    scroll_x: window.scrollX,
+                    scroll_y: window.scrollY,
+                    max_scroll_y: maxY,
+                    viewport_height: window.innerHeight
+                };
+            }""",
+            {"direction": direction, "amount": amount},
+        )
+        return {
+            "session_id": session_id,
+            "final_url": page.url,
+            "title": page.title(),
+            "direction": direction,
+            "amount": amount,
+            **result,
+        }
+
+    def session_switch_tab(self, session_id: str, tab_index: int) -> Dict[str, Any]:
+        """Switch the active page for ``session_id`` to ``tab_index``."""
+        session = self._require_session(session_id)
+        context = session.context
+        pages = context.pages
+        if not pages:
+            return {
+                "error": "no_tabs",
+                "operation": "session_switch_tab",
+                "session_id": session_id,
+            }
+        if tab_index < 0 or tab_index >= len(pages):
+            return {
+                "error": "tab_out_of_range",
+                "operation": "session_switch_tab",
+                "session_id": session_id,
+                "requested_index": tab_index,
+                "page_count": len(pages),
+            }
+        page = pages[tab_index]
+        page.bring_to_front()
+        session.page = page
+        urls = [p.url for p in pages]
+        return {
+            "session_id": session_id,
+            "final_url": page.url,
+            "title": page.title(),
+            "active_index": tab_index,
+            "page_count": len(pages),
+            "open_urls": urls,
+        }
+
+    def session_upload_file(
+        self,
+        session_id: str,
+        selector: str,
+        files: Union[str, list[str]],
+        *,
+        timeout_ms: int = 5000,
+    ) -> Dict[str, Any]:
+        """Upload ``files`` into an ``<input type=file>`` within the session."""
+        session = self._require_session(session_id)
+        page = session.page
+        try:
+            page.wait_for_selector(selector, timeout=timeout_ms)
+        except TimeoutError:
+            return self._timeout_result(
+                "session_upload_file",
+                session_id=session_id,
+                selector=selector,
+                final_url=page.url,
+                timeout_ms=timeout_ms,
+            )
+        file_list = [files] if isinstance(files, str) else list(files)
+        missing = [path for path in file_list if not Path(path).expanduser().exists()]
+        if missing:
+            return {
+                "error": "file_missing",
+                "operation": "session_upload_file",
+                "session_id": session_id,
+                "missing": missing,
+            }
+        resolved = [str(Path(path).expanduser().resolve()) for path in file_list]
+        try:
+            page.set_input_files(selector, resolved, timeout=timeout_ms)
+        except TimeoutError:
+            return self._timeout_result(
+                "session_upload_file",
+                session_id=session_id,
+                selector=selector,
+                final_url=page.url,
+                timeout_ms=timeout_ms,
+                phase="set_files",
+            )
+        return {
+            "session_id": session_id,
+            "final_url": page.url,
+            "title": page.title(),
+            "selector": selector,
+            "files": resolved,
+        }
+
+    def session_download_file(
+        self,
+        session_id: str,
+        trigger_selector: str,
+        *,
+        timeout_ms: int = 15000,
+        save_as: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Trigger a download via ``trigger_selector`` and save the file locally."""
+        session = self._require_session(session_id)
+        page = session.page
+        try:
+            page.wait_for_selector(trigger_selector, timeout=timeout_ms)
+        except TimeoutError:
+            return self._timeout_result(
+                "session_download_file",
+                session_id=session_id,
+                selector=trigger_selector,
+                final_url=page.url,
+                timeout_ms=timeout_ms,
+            )
+        try:
+            with page.expect_download(timeout=timeout_ms) as download_info:
+                page.click(trigger_selector, timeout=timeout_ms)
+            download = download_info.value
+        except TimeoutError:
+            return self._timeout_result(
+                "session_download_file",
+                session_id=session_id,
+                selector=trigger_selector,
+                final_url=page.url,
+                timeout_ms=timeout_ms,
+                phase="download",
+            )
+        failure = download.failure
+        if failure:
+            return {
+                "error": "download_failed",
+                "operation": "session_download_file",
+                "session_id": session_id,
+                "final_url": page.url,
+                "message": failure,
+            }
+        suggested = download.suggested_filename or f"download-{uuid4().hex}"
+        if save_as:
+            destination = Path(save_as).expanduser()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            destination = self._download_dir / f"{uuid4().hex}-{suggested}"
+        download.save_as(str(destination))
+        return {
+            "session_id": session_id,
+            "final_url": page.url,
+            "title": page.title(),
+            "trigger_selector": trigger_selector,
+            "download_path": str(destination.resolve()),
+            "suggested_filename": suggested,
+            "download_url": download.url,
+        }
 
     def open_session(self, url: str, *, wait_until: str = "load") -> Dict[str, Any]:
         """Open a persistent session for ``url`` and return its identifier."""

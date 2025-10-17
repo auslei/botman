@@ -1,4 +1,4 @@
-﻿# Browser Agent Kit
+# Browser Agent Kit
 
 ## Purpose
 Provide a compact browser automation helper that Playwright-powered agents can call to reuse authenticated Gmail sessions and perform basic page actions (navigate, extract text, click) with minimal boilerplate.
@@ -18,7 +18,8 @@ Provide a compact browser automation helper that Playwright-powered agents can c
   - returning authenticated contexts for navigation,
   - helper actions like `extract_text()` and `click()`,
   - long-lived session handles so multi-step flows can run against the same Playwright context,
-  - structured discovery helpers (`list_links`, `list_forms`, `list_tables`) and `take_screenshot` for artifact capture.
+  - structured discovery helpers (`list_links`, `list_forms`, `list_tables`) and `take_screenshot` for artifact capture,
+  - automation primitives such as `type_text`, `fill_form`, `scroll`, `switch_tab`, `upload_file`, and `download_file` for interactive flows.
 - **BrowserAgentMCPServer** - minimal façade that exposes MCP-style tools: `navigate`, `extract_text`, `click`, plus session-aware helpers `open_session`, `session_goto`, `session_extract_text`, `session_click`, and `close_session`.
 - **FastMCP globals** - `browserbot.fastmcp_server.mcp` exposes the ready-to-run FastMCP server, `app` aliases it for tooling, and `configure_browser_agent()` toggles headless/headed mode.
 - **Structured responses** – all tools return dictionaries. On timeouts the payload has `{"error": "timeout", "operation": "...", ...}` so agents can branch without parsing exceptions.
@@ -64,8 +65,9 @@ if __name__ == "__main__":
     run_application(app)
 ```
 
-The registered tools mirror the `BrowserAgentMCPServer` surface (`ensure_login`, `navigate`, `extract_text`, `click`, `list_links`, `list_forms`, `list_tables`, `take_screenshot`, `open_session`, `session_goto`, `session_extract_text`, `session_click`, `close_session`). Calls are serialized via a `threading.Lock` so Playwright's sync API stays safe inside FastMCP's async loop.
-Structured inspection helpers power DOM discovery and artifact capture while retaining the same structured timeout payloads.
+The registered tools mirror the `BrowserAgentMCPServer` surface (`ensure_login`, `navigate`, `extract_text`, `click`, `list_links`, `session_list_links`, `list_forms`, `list_tables`, `take_screenshot`, `type_text`, `fill_form`, `scroll`, `switch_tab`, `upload_file`, `download_file`, `open_session`, `session_goto`, `session_extract_text`, `session_click`, `close_session`). Calls are serialized via a `threading.Lock` so Playwright's sync API stays safe inside FastMCP's async loop.
+Structured inspection helpers power DOM discovery, and the automation primitives handle typing, scrolling, tab focus, file upload, and download while retaining the same structured timeout payloads.
+Selectors such as `wait_selector`, `root_selector`, and `link_selector` help target dynamic content (e.g., DuckDuckGo SERPs) via `list_links`/`session_list_links`.
 
 The module also exports a default `app`, so tooling like `fastmcp run browserbot.fastmcp_server` can discover it without additional wiring.
 
@@ -115,10 +117,10 @@ The FastMCP surface will grow in staged waves so clients can adopt changes incre
    - Output: structured element summaries (href, labels, input types) plus base64 screenshot artifacts.
    - Follow-up: expand heuristics (semantic labeling, diff detection) as needed.
 
-2. **Interaction & Automation**
-   - Tools: `fill_form`, `type_text`, `scroll`, `switch_tab`, `upload_file`, `download_file`.
-   - Behavior: consistent wait strategy options and explicit success/error payloads (e.g., new URL, downloaded file path).
-   - Safety: annotate destructive operations and require explicit domain checks before executing.
+2. **Interaction & Automation (in progress)**
+   - Shipped: `type_text`, `fill_form`, `scroll`, `switch_tab`, `upload_file`, `download_file` with structured success/error payloads.
+   - Next: richer heuristics (auto field detection, safer submission strategies, configurable domain safeguards).
+   - Safety: maintain explicit domain checks and destructive annotations as new automation capabilities land.
 
 3. **Security & Session Reliability**
    - Tools: `start_mfa_challenge`, `submit_totp`, `validate_session`.

@@ -51,7 +51,7 @@ uv run --script fastmcp-server -- --headed
 ```
 
 - Omit `--headed` for headless mode (default).
-- The FastMCP server runs over STDIO and registers tools: `ensure_login`, `navigate`, `extract_text`, `click`, `list_links`, `list_forms`, `list_tables`, `take_screenshot`, `open_session`, `session_goto`, `session_extract_text`, `session_click`, and `close_session`.
+- The FastMCP server runs over STDIO and registers tools: `ensure_login`, `navigate`, `extract_text`, `click`, `list_links`, `session_list_links`, `list_forms`, `list_tables`, `take_screenshot`, `type_text`, `fill_form`, `scroll`, `switch_tab`, `upload_file`, `download_file`, `open_session`, `session_goto`, `session_extract_text`, `session_click`, and `close_session`.
 - Tool responses have explicit JSON schemas (success vs timeout payloads) so LLM clients know exactly what to expect.
 
 ### Installing in MCP Clients
@@ -83,7 +83,9 @@ That ensures the `browserbot` package and Playwright dependencies are available 
 - Typed navigation helpers (`navigate`, `open_session`, `session_goto`) that return page URL/title metadata.
 - Content extraction (`extract_text`, `session_extract_text`) with timeout diagnostics.
 - Interaction helpers (`click`, `session_click`) with optional post-wait handling.
+- Session automation primitives (`type_text`, `fill_form`, `scroll`, `switch_tab`, `upload_file`, `download_file`) for richer multi-step flows; pair them with `session_list_links` for dynamic result discovery.
 - Structured DOM inspection (`list_links`, `list_forms`, `list_tables`) delivering normalized metadata with pagination flags.
+  - `list_links`/`session_list_links` accept optional `wait_selector`, `root_selector`, and `link_selector` arguments to target dynamic content (e.g., DuckDuckGo SERP links).
 - Screenshot capture (`take_screenshot`) with selector/full-page support and base64-encoded artifacts.
 - Deterministic session lifecycle (`open_session`, `close_session`) so multi-step flows operate on stable contexts.
 - Async-friendly FastMCP endpoints that wrap the Playwright sync API via background threads.
@@ -93,7 +95,7 @@ That ensures the `browserbot` package and Playwright dependencies are available 
 The next iteration will expand the tool surface to cover:
 
 - Advanced DOM semantics (heuristic element selection, change detection, richer metadata).
-- Rich interaction utilities (form fill, typing, scrolling, tab/window control, file uploads/downloads).
+- Advanced interaction heuristics (auto element targeting, resilience against UI changes, richer workflow orchestration).
 - Security and compliance helpers (MFA handling, domain allowlists, audit logging).
 - Data packaging improvements (table-to-CSV/JSON exports, screenshot capture resources).
 - Human-in-the-loop bridges (approval prompts, summarized status reports).

@@ -70,6 +70,13 @@ class TimeoutResult(TypedDict):
     phase: NotRequired[str]
 
 
+class NotFoundError(TypedDict):
+    error: Literal["not_found"]
+    operation: str
+    selector: str
+    final_url: str
+
+
 class LinkInfo(TypedDict):
     position: int
     href: str
@@ -111,6 +118,12 @@ class FormInfo(TypedDict):
     controls_truncated: bool
 
 
+class SessionListLinksResult(SessionBase):
+    count: int
+    links: list[LinkInfo]
+    truncated: bool
+
+
 class ListFormsResult(PageMetadata):
     count: int
     forms: list[FormInfo]
@@ -139,11 +152,91 @@ class ScreenshotResult(PageMetadata):
     selector: NotRequired[str]
 
 
-class ScreenshotNotFound(TypedDict):
-    error: Literal["not_found"]
-    operation: Literal["take_screenshot"]
+class FilledField(TypedDict):
     selector: str
+    value: str
+
+
+class SkippedField(TypedDict):
+    selector: str
+    reason: str
+
+
+class SessionTypeTextResult(SessionBase):
+    selector: str
+    value: str
+    append: bool
+    submitted: bool
+    submission_method: NotRequired[str | None]
+
+
+class SubmissionInfo(TypedDict, total=False):
+    method: str
+    selector: NotRequired[str]
+    reason: NotRequired[str]
+
+
+class SessionFillFormResult(SessionBase):
+    filled: list[FilledField]
+    skipped: list[SkippedField]
+    submitted: bool
+    submission: NotRequired[SubmissionInfo | None]
+
+
+class SessionScrollResult(SessionBase):
+    direction: Literal["down", "up", "to_top", "to_bottom"]
+    amount: int
+    scroll_x: int
+    scroll_y: int
+    max_scroll_y: int
+    viewport_height: int
+
+
+class SessionSwitchTabResult(SessionBase):
+    active_index: int
+    page_count: int
+    open_urls: list[str]
+
+
+class SessionUploadFileResult(SessionBase):
+    selector: str
+    files: list[str]
+
+
+class SessionDownloadFileResult(SessionBase):
+    trigger_selector: str
+    download_path: str
+    suggested_filename: str
+    download_url: str
+
+
+class FileMissingError(TypedDict):
+    error: Literal["file_missing"]
+    operation: str
+    session_id: str
+    missing: list[str]
+
+
+class DownloadFailedError(TypedDict):
+    error: Literal["download_failed"]
+    operation: str
+    session_id: str
     final_url: str
+    message: str
+
+
+class TabOutOfRangeError(TypedDict):
+    error: Literal["tab_out_of_range"]
+    operation: str
+    session_id: str
+    requested_index: int
+    page_count: int
+
+
+class NoTabsError(TypedDict):
+    error: Literal["no_tabs"]
+    operation: str
+    session_id: str
 
 
 _agent_lock = Lock()
@@ -176,11 +269,28 @@ async def _call_agent(func: Callable[..., T], *args, **kwargs) -> T:
 
 
 def _is_timeout(result: Any) -> bool:
-    return isinstance(result, dict) and result.get("error") == "timeout"
+    return isinstance(result, dict) and result.get('error') == 'timeout'
 
 
 def _is_not_found(result: Any) -> bool:
-    return isinstance(result, dict) and result.get("error") == "not_found"
+    return isinstance(result, dict) and result.get('error') == 'not_found'
+
+
+def _is_file_missing(result: Any) -> bool:
+    return isinstance(result, dict) and result.get('error') == 'file_missing'
+
+
+def _is_download_failed(result: Any) -> bool:
+    return isinstance(result, dict) and result.get('error') == 'download_failed'
+
+
+def _tab_error_code(result: Any) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    error = result.get('error')
+    if error in {'no_tabs', 'tab_out_of_range'}:
+        return error
+    return None
 mcp = FastMCP(name="browserbot-agent")
 
 
@@ -247,12 +357,47 @@ async def list_links(
     url: str,
     wait_until: str = "load",
     limit: int | None = 200,
+    wait_selector: str | None = None,
+    root_selector: str | None = None,
+    link_selector: str | None = None,
 ) -> ListLinksResult | TimeoutResult:
     """Return structured metadata for anchor tags found at ``url``."""
-    result = await _call_agent(_agent.list_links, url, wait_until=wait_until, limit=limit)
+    result = await _call_agent(
+        _agent.list_links,
+        url,
+        wait_until=wait_until,
+        limit=limit,
+        wait_selector=wait_selector,
+        root_selector=root_selector,
+        link_selector=link_selector,
+    )
     if _is_timeout(result):
         return cast(TimeoutResult, result)
     return cast(ListLinksResult, result)
+
+
+@mcp.tool
+async def session_list_links(
+    session_id: str,
+    limit: int | None = 200,
+    wait_selector: str | None = None,
+    root_selector: str | None = None,
+    link_selector: str | None = None,
+    timeout_ms: int = 5000,
+) -> SessionListLinksResult | TimeoutResult:
+    """Return structured metadata for links on the current session page."""
+    result = await _call_agent(
+        _agent.session_list_links,
+        session_id,
+        limit=limit,
+        wait_selector=wait_selector,
+        root_selector=root_selector,
+        link_selector=link_selector,
+        timeout_ms=timeout_ms,
+    )
+    if _is_timeout(result):
+        return cast(TimeoutResult, result)
+    return cast(SessionListLinksResult, result)
 
 
 @mcp.tool
@@ -303,7 +448,7 @@ async def take_screenshot(
     full_page: bool = True,
     image_format: Literal["png", "jpeg"] = "png",
     quality: int | None = None,
-) -> ScreenshotResult | TimeoutResult | ScreenshotNotFound:
+) -> ScreenshotResult | TimeoutResult | NotFoundError:
     """Capture a screenshot of ``url`` (optionally scoped to ``selector``)."""
     result = await _call_agent(
         _agent.take_screenshot,
@@ -317,8 +462,135 @@ async def take_screenshot(
     if _is_timeout(result):
         return cast(TimeoutResult, result)
     if _is_not_found(result):
-        return cast(ScreenshotNotFound, result)
+        return cast(NotFoundError, result)
     return cast(ScreenshotResult, result)
+
+
+@mcp.tool
+async def type_text(
+    session_id: str,
+    selector: str,
+    value: str,
+    append: bool = False,
+    delay_ms: int | None = None,
+    submit: bool = False,
+    timeout_ms: int = 5000,
+) -> SessionTypeTextResult | TimeoutResult:
+    """Type text into an element within an existing session."""
+    result = await _call_agent(
+        _agent.session_type_text,
+        session_id,
+        selector,
+        value,
+        append=append,
+        delay_ms=delay_ms,
+        submit=submit,
+        timeout_ms=timeout_ms,
+    )
+    if _is_timeout(result):
+        return cast(TimeoutResult, result)
+    return cast(SessionTypeTextResult, result)
+
+
+@mcp.tool
+async def fill_form(
+    session_id: str,
+    fields: dict[str, str] | list[dict[str, str]],
+    submit: bool = False,
+    submit_selector: str | None = None,
+    timeout_ms: int = 5000,
+) -> SessionFillFormResult | TimeoutResult:
+    """Fill multiple selectors with values inside a session."""
+    result = await _call_agent(
+        _agent.session_fill_form,
+        session_id,
+        fields,
+        submit=submit,
+        submit_selector=submit_selector,
+        timeout_ms=timeout_ms,
+    )
+    if _is_timeout(result):
+        return cast(TimeoutResult, result)
+    return cast(SessionFillFormResult, result)
+
+
+@mcp.tool
+async def scroll(
+    session_id: str,
+    direction: Literal["down", "up", "to_top", "to_bottom"] = "down",
+    amount: int = 1000,
+) -> SessionScrollResult:
+    """Scroll the active session page."""
+    result = await _call_agent(
+        _agent.session_scroll,
+        session_id,
+        direction=direction,
+        amount=amount,
+    )
+    return cast(SessionScrollResult, result)
+
+
+@mcp.tool
+async def switch_tab(
+    session_id: str,
+    tab_index: int,
+) -> SessionSwitchTabResult | TabOutOfRangeError | NoTabsError:
+    """Switch focus to the specified tab within the session."""
+    result = await _call_agent(
+        _agent.session_switch_tab,
+        session_id,
+        tab_index,
+    )
+    code = _tab_error_code(result)
+    if code == "no_tabs":
+        return cast(NoTabsError, result)
+    if code == "tab_out_of_range":
+        return cast(TabOutOfRangeError, result)
+    return cast(SessionSwitchTabResult, result)
+
+
+@mcp.tool
+async def upload_file(
+    session_id: str,
+    selector: str,
+    files: str | list[str],
+    timeout_ms: int = 5000,
+) -> SessionUploadFileResult | TimeoutResult | FileMissingError:
+    """Upload files via an `<input type=file>` element."""
+    result = await _call_agent(
+        _agent.session_upload_file,
+        session_id,
+        selector,
+        files,
+        timeout_ms=timeout_ms,
+    )
+    if _is_timeout(result):
+        return cast(TimeoutResult, result)
+    if _is_file_missing(result):
+        return cast(FileMissingError, result)
+    return cast(SessionUploadFileResult, result)
+
+
+@mcp.tool
+async def download_file(
+    session_id: str,
+    trigger_selector: str,
+    timeout_ms: int = 15000,
+    save_as: str | None = None,
+) -> SessionDownloadFileResult | TimeoutResult | DownloadFailedError:
+    """Trigger a download and return the saved file path."""
+    result = await _call_agent(
+        _agent.session_download_file,
+        session_id,
+        trigger_selector,
+        timeout_ms=timeout_ms,
+        save_as=save_as,
+    )
+    if _is_timeout(result):
+        return cast(TimeoutResult, result)
+    if _is_download_failed(result):
+        return cast(DownloadFailedError, result)
+    return cast(SessionDownloadFileResult, result)
 
 
 @mcp.tool
