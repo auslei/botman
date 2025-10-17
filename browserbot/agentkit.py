@@ -11,10 +11,11 @@ This module exposes two primary entry points:
 
 from __future__ import annotations
 
+import base64
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Mapping, Optional, Tuple, Union, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -234,6 +235,219 @@ class BrowserAgent(AbstractContextManager["BrowserAgent"]):
                         phase="post_wait",
                     )
             return {"final_url": page.url, "title": page.title(), "clicked": selector}
+        finally:
+            context.close()
+
+    def list_links(
+        self,
+        url: str,
+        *,
+        wait_until: str = "load",
+        limit: Optional[int] = 200,
+    ) -> Dict[str, Any]:
+        """Return structured metadata for anchor tags found at ``url``."""
+        context, page, error = self._open_page(url, wait_until=wait_until, operation="list_links")
+        try:
+            if error is not None:
+                return error
+            elements = page.query_selector_all("a")
+            links = []
+            for position, element in enumerate(elements, start=1):
+                href = element.get_attribute("href") or ""
+                text = (element.inner_text() or "").strip()
+                title = element.get_attribute("title")
+                aria_label = element.get_attribute("aria-label")
+                target = element.get_attribute("target")
+                rel = element.get_attribute("rel")
+                link = {
+                    "position": position,
+                    "href": href,
+                    "text": text,
+                    "title": title or None,
+                    "aria_label": aria_label or None,
+                    "target": target or None,
+                    "rel": rel or None,
+                }
+                links.append(link)
+            total = len(links)
+            truncated = limit is not None and total > limit
+            if truncated:
+                links = links[: limit or total]
+            return {
+                "final_url": page.url,
+                "title": page.title(),
+                "count": total,
+                "links": links,
+                "truncated": truncated,
+            }
+        finally:
+            context.close()
+
+    def list_forms(
+        self,
+        url: str,
+        *,
+        wait_until: str = "load",
+        limit: Optional[int] = 50,
+        max_fields_per_form: int = 25,
+    ) -> Dict[str, Any]:
+        """Return structured metadata for form elements on ``url``."""
+        context, page, error = self._open_page(url, wait_until=wait_until, operation="list_forms")
+        try:
+            if error is not None:
+                return error
+            forms = []
+            form_elements = page.query_selector_all("form")
+            for position, form in enumerate(form_elements, start=1):
+                controls = []
+                control_elements = form.query_selector_all("input, textarea, select, button")
+                for idx, control in enumerate(control_elements, start=1):
+                    if idx > max_fields_per_form:
+                        break
+                    payload = control.evaluate(
+                        """(element) => ({
+                            tag: element.tagName.toLowerCase(),
+                            type: element.getAttribute('type'),
+                            name: element.getAttribute('name'),
+                            id: element.id || null,
+                            placeholder: element.getAttribute('placeholder'),
+                            aria_label: element.getAttribute('aria-label'),
+                            value: element.getAttribute('value'),
+                            required: element.hasAttribute('required'),
+                            disabled: element.hasAttribute('disabled'),
+                            labels: element.labels ? Array.from(element.labels).map(l => l.innerText.trim()).filter(Boolean) : []
+                        })"""
+                    )
+                    controls.append(payload)
+                forms.append(
+                    {
+                        "position": position,
+                        "action": form.get_attribute("action") or "",
+                        "method": (form.get_attribute("method") or "get").lower(),
+                        "id": form.get_attribute("id") or None,
+                        "name": form.get_attribute("name") or None,
+                        "enctype": form.get_attribute("enctype") or None,
+                        "controls": controls,
+                        "control_count": len(control_elements),
+                        "controls_truncated": len(control_elements) > len(controls),
+                    }
+                )
+            total = len(forms)
+            truncated = limit is not None and total > limit
+            if truncated:
+                forms = forms[: limit or total]
+            return {
+                "final_url": page.url,
+                "title": page.title(),
+                "count": total,
+                "forms": forms,
+                "truncated": truncated,
+            }
+        finally:
+            context.close()
+
+    def list_tables(
+        self,
+        url: str,
+        *,
+        wait_until: str = "load",
+        limit: Optional[int] = 20,
+        max_rows: int = 25,
+    ) -> Dict[str, Any]:
+        """Return structured table data discovered on ``url``."""
+        context, page, error = self._open_page(url, wait_until=wait_until, operation="list_tables")
+        try:
+            if error is not None:
+                return error
+            tables = []
+            table_elements = page.query_selector_all("table")
+            for position, table in enumerate(table_elements, start=1):
+                caption_el = table.query_selector("caption")
+                caption = caption_el.inner_text().strip() if caption_el else None
+                header_cells = table.query_selector_all("thead tr th, thead tr td")
+                if not header_cells:
+                    header_cells = table.query_selector_all("tr th")
+                headers = [(cell.inner_text() or "").strip() for cell in header_cells]
+
+                body_rows = table.query_selector_all("tbody tr")
+                if not body_rows:
+                    body_rows = table.query_selector_all("tr")
+
+                rows = []
+                for idx, row in enumerate(body_rows, start=1):
+                    if idx > max_rows:
+                        break
+                    cells = row.query_selector_all("th, td")
+                    rows.append([(cell.inner_text() or "").strip() for cell in cells])
+
+                total_rows = len(body_rows)
+                tables.append(
+                    {
+                        "position": position,
+                        "caption": caption,
+                        "headers": headers,
+                        "rows": rows,
+                        "row_count": total_rows,
+                        "rows_truncated": total_rows > len(rows),
+                    }
+                )
+            total_tables = len(tables)
+            truncated = limit is not None and total_tables > limit
+            if truncated:
+                tables = tables[: limit or total_tables]
+            return {
+                "final_url": page.url,
+                "title": page.title(),
+                "count": total_tables,
+                "tables": tables,
+                "truncated": truncated,
+            }
+        finally:
+            context.close()
+
+    def take_screenshot(
+        self,
+        url: str,
+        *,
+        wait_until: str = "load",
+        selector: Optional[str] = None,
+        full_page: bool = True,
+        image_format: Literal["png", "jpeg"] = "png",
+        quality: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Capture a screenshot of ``url`` (optionally scoped to ``selector``)."""
+        context, page, error = self._open_page(url, wait_until=wait_until, operation="take_screenshot")
+        try:
+            if error is not None:
+                return error
+            screenshot_bytes: bytes
+            metadata: Dict[str, Any] = {}
+            screenshot_kwargs = {"type": image_format}
+            if image_format == "jpeg" and quality is not None:
+                screenshot_kwargs["quality"] = quality
+            if selector:
+                element = page.query_selector(selector)
+                if element is None:
+                    return {
+                        "error": "not_found",
+                        "operation": "take_screenshot",
+                        "selector": selector,
+                        "final_url": page.url,
+                    }
+                screenshot_bytes = element.screenshot(**screenshot_kwargs)
+                metadata["selector"] = selector
+                metadata["full_page"] = False
+            else:
+                screenshot_bytes = page.screenshot(full_page=full_page, **screenshot_kwargs)
+                metadata["full_page"] = full_page
+            encoded = base64.b64encode(screenshot_bytes).decode("ascii")
+            return {
+                "final_url": page.url,
+                "title": page.title(),
+                "image_format": image_format,
+                "screenshot_base64": encoded,
+                **metadata,
+            }
         finally:
             context.close()
 

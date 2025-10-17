@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+botman.egg-info/PKG-INFO
+botman.egg-info/SOURCES.txt
+botman.egg-info/dependency_links.txt
+botman.egg-info/entry_points.txt
+botman.egg-info/requires.txt
+botman.egg-info/top_level.txt
+browserbot/__init__.py
+browserbot/agentkit.py
+browserbot/autobrowser.py
+browserbot/fastmcp_server.py
+browserbot/google.py
+guibot/autogui.py

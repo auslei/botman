@@ -1,0 +1,2 @@
+[console_scripts]
+fastmcp-server = browserbot.fastmcp_server:main

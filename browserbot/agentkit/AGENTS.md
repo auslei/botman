@@ -11,15 +11,16 @@ Provide a compact browser automation helper that Playwright-powered agents can c
 
 ## Key Components
 - **DomainConfig** – tiny dataclass describing how to log into a domain (login URL, CLI instructions, session file path, persistent profile directory, launch flags).
-- **BrowserAgent** – context-managed wrapper around Playwright. It handles:
+- **BrowserAgent** - context-managed wrapper around Playwright. It handles:
   - starting/stopping Playwright and Chromium,
-  - launching a persistent “stealth” context for manual login when no session exists,
+  - launching a persistent "stealth" context for manual login when no session exists,
   - caching storage-state files per domain,
   - returning authenticated contexts for navigation,
   - helper actions like `extract_text()` and `click()`,
-  - long-lived session handles so multi-step flows can run against the same Playwright context.
-- **BrowserAgentMCPServer** – minimal façade that exposes MCP-style tools: `navigate`, `extract_text`, `click`, plus session-aware helpers `open_session`, `session_goto`, `session_extract_text`, `session_click`, and `close_session`.
-- **BrowserAgentFastMCP** – utility that registers the same tool set with a FastMCP application for easy hosting without custom boilerplate.
+  - long-lived session handles so multi-step flows can run against the same Playwright context,
+  - structured discovery helpers (`list_links`, `list_forms`, `list_tables`) and `take_screenshot` for artifact capture.
+- **BrowserAgentMCPServer** - minimal façade that exposes MCP-style tools: `navigate`, `extract_text`, `click`, plus session-aware helpers `open_session`, `session_goto`, `session_extract_text`, `session_click`, and `close_session`.
+- **FastMCP globals** - `browserbot.fastmcp_server.mcp` exposes the ready-to-run FastMCP server, `app` aliases it for tooling, and `configure_browser_agent()` toggles headless/headed mode.
 - **Structured responses** – all tools return dictionaries. On timeouts the payload has `{"error": "timeout", "operation": "...", ...}` so agents can branch without parsing exceptions.
 
 ## Interaction Flow
@@ -50,31 +51,86 @@ with create_mcp_server(headless=False) as server:
 
 ## FastMCP Hosting
 
-`browserbot/fastmcp_server.py` exposes `create_fastmcp_app()` and `BrowserAgentFastMCP`. Example CLI adapter:
+`browserbot/fastmcp_server.py` exports an `mcp` instance and helper to reconfigure headless mode. Example CLI adapter:
 
 ```python
 from fastmcp.server import run_application  # or preferred runner
-from browserbot.fastmcp_server import create_fastmcp_app
+from browserbot.fastmcp_server import configure_browser_agent, mcp
 
-app = create_fastmcp_app(headless=False)
+configure_browser_agent(headless=False)
+app = mcp
 
 if __name__ == "__main__":
     run_application(app)
 ```
 
-The registered tools mirror the `BrowserAgentMCPServer` surface (`ensure_login`, `navigate`, `extract_text`, `click`, `open_session`, `session_goto`, `session_extract_text`, `session_click`, `close_session`). Each tool call runs in a protected section (`asyncio.Lock`) to keep Playwright’s sync API safe inside FastMCP’s async runtime.
+The registered tools mirror the `BrowserAgentMCPServer` surface (`ensure_login`, `navigate`, `extract_text`, `click`, `list_links`, `list_forms`, `list_tables`, `take_screenshot`, `open_session`, `session_goto`, `session_extract_text`, `session_click`, `close_session`). Calls are serialized via a `threading.Lock` so Playwright's sync API stays safe inside FastMCP's async loop.
+Structured inspection helpers power DOM discovery and artifact capture while retaining the same structured timeout payloads.
 
-You can also rely on the bundled UV script:
+The module also exports a default `app`, so tooling like `fastmcp run browserbot.fastmcp_server` can discover it without additional wiring.
+
+You can also rely on the bundled entry point:
 
 ```bash
-uv run fastmcp-server -- --headed --host 0.0.0.0 --port 8080
+uv run --script fastmcp-server -- --headed
 ```
+
+### Client Installation Shortcuts
+
+Use FastMCP’s installers from the repo root so UV resolves this package and its dependencies:
+
+```bash
+# Claude Desktop
+uv run fastmcp install claude-desktop browserbot/fastmcp_server.py --project G:\dev\botman
+
+# Claude Code (example)
+uv run fastmcp install claude-code browserbot/fastmcp_server.py --project G:\dev\botman
+
+# Emit a portable MCP config
+uv run fastmcp install mcp-json browserbot/fastmcp_server.py --project G:\dev\botman
+```
+
+The generated entries invoke:
+
+```
+uv run --with fastmcp --project G:\dev\botman fastmcp run G:\dev\botman\browserbot\fastmcp_server.py
+```
+
+Adjust `G:\dev\botman` if the project lives elsewhere.
+
+### FastMCP Reference Docs
+- `dev_documents/fastmcp_llms_doc.txt` – index of official FastMCP documentation links.
+- `dev_documents/fastmcp_server_doc.md` – snapshot of the FastMCP server guide.
+- `dev_documents/fastmcp_tools_doc.md` – snapshot of the FastMCP tools guide.
 
 ## Manual Gmail Login
 Run `uv run python browserbot/google.py`. The helper calls `create_agent(headless=False)` and `ensure_login("mail.google.com", force=True)`. You’ll see a headed browser with Gmail; complete the login (including MFA if required) and press Enter in the terminal to save the storage state for reuse.
 
-## Roadmap Ideas
-1. Add more MCP tools (DOM querying, button clicks, data extraction) on top of `BrowserAgent`.
-2. Extend `BrowserAgent` with optional validation hooks to confirm a session is still valid before reuse.
-3. Expose the same agent through FastAPI or FastMCP if a REST or socket transport is needed.
-4. Add automated tests using mocked Playwright contexts to cover navigation and session caching paths.
+## Capability Expansion Plan
+
+The FastMCP surface will grow in staged waves so clients can adopt changes incrementally:
+
+1. **Page Discovery Toolkit (shipped)**
+   - Tools: `list_links`, `list_forms`, `list_tables`, `take_screenshot`.
+   - Output: structured element summaries (href, labels, input types) plus base64 screenshot artifacts.
+   - Follow-up: expand heuristics (semantic labeling, diff detection) as needed.
+
+2. **Interaction & Automation**
+   - Tools: `fill_form`, `type_text`, `scroll`, `switch_tab`, `upload_file`, `download_file`.
+   - Behavior: consistent wait strategy options and explicit success/error payloads (e.g., new URL, downloaded file path).
+   - Safety: annotate destructive operations and require explicit domain checks before executing.
+
+3. **Security & Session Reliability**
+   - Tools: `start_mfa_challenge`, `submit_totp`, `validate_session`.
+   - Features: domain allowlists, credential vault integration hooks, and session health probes that surface diagnostics before performing sensitive actions.
+   - Documentation: outline approval flows and client side obligations for secrets.
+
+4. **Observability & Data Products**
+   - Tools/resources: `get_event_log`, `export_table_csv`, `capture_html`, `capture_screenshot`.
+   - Goal: make it easy for agents to hand back artifacts, audit transcripts, or structured datasets without manual scraping.
+
+5. **Human-in-the-Loop Bridges**
+   - Tools/prompts: `request_human_approval`, `summarize_page`, reusable prompt templates for status updates.
+   - Integration: leverage FastMCP elicitation so flows pause safely when confidence is low.
+
+Each wave will ship with schema updates, docstrings, and examples. Tracking and implementation details will live beside the relevant code in `browserbot/agentkit.py` and `browserbot/fastmcp_server.py`; this document records sequencing and design guidance.

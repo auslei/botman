@@ -11,16 +11,17 @@ dependencies = [
     "playwright>=1.55.0",
     "pyautogui>=0.9.54",
     "fastmcp>=0.1.0",
+    "mcp[cli]>=1.17.0",
 ]
 
-[tool.uv.scripts]
-fastmcp-server = "python -m browserbot.fastmcp_server"
-
+[tool.uv]
+package = true
 
 [tool.setuptools.packages.find]
 include = [
     "browserbot",
-    "browserbot.*",
-    "guibot",
     "guibot.*",
 ]
+
+[project.scripts]
+fastmcp-server = "browserbot.fastmcp_server:main"
