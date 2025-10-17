@@ -11,64 +11,69 @@ Requires-Dist: playwright>=1.55.0
 Requires-Dist: pyautogui>=0.9.54
 Requires-Dist: fastmcp>=0.1.0
 Requires-Dist: mcp[cli]>=1.17.0
+Requires-Dist: openai-agents>=0.1.0
 
 # Botman Browser Agent Kit
 
-`botman` bundles Playwright-powered browser automation utilities that capture reusable sessions (e.g., Gmail) and expose agent-friendly tool surfaces. You can run it directly from Python, or host the tools as Model Context Protocol (MCP) endpoints using FastMCP.
+`botman` ships a small set of Playwright-powered helpers that are easy to embed in autonomous agents. The codebase favours clarity over breadth: a single `BrowserAgent` class wraps the Playwright sync API and a FastMCP adapter exposes those helpers as tools.
 
 ## Prerequisites
 
 - Python 3.12+
-- Playwright browsers installed (run `uv run playwright install chromium` after syncing dependencies)
+- Playwright browsers (run `uv run playwright install chromium` after syncing dependencies)
 
 ## Installation
 
 ```bash
 uv sync
-uv run playwright install chromium  # first-time browser download
+uv run playwright install chromium
 ```
 
-## Manual Gmail Login
-
-Before running automated tasks, capture a Gmail session once:
-
-```bash
-uv run python browserbot/google.py
-```
-
-This launches a headed Chromium window. Complete the login flow (including MFA) and press Enter in the terminal so the storage state is saved under `browserbot/tmp/`.
-
-## Using the Browser Agent Programmatically
+## Using the BrowserAgent Directly
 
 ```python
 from browserbot.agentkit import create_agent
 
 with create_agent(headless=False) as agent:
-    session = agent.open_session("https://mail.google.com/")
-    sid = session["session_id"]
+    meta = agent.navigate("https://example.com")
+    print(meta["title"])
 
-    inbox = agent.session_extract_text(sid, selector="div[role='main']")
-    print(inbox["title"], inbox["final_url"])
+    links = agent.list_links("https://example.com")
+    for link in links["links"][:5]:
+        print(link["text"], link["href"])
 
-    agent.session_click(sid, selector='text=Compose')
-    agent.close_session(sid)
+    hero_copy = agent.extract_text("https://example.com", "h1")
+    print(hero_copy["text"])
 ```
 
-Each helper returns dictionaries. If a Playwright wait hits a timeout, the payload includes `{"error": "timeout", "operation": "...", ...}` so callers can branch without exception handling.
+Every helper opens a fresh browser context, performs the requested action, and closes the context again. If Playwright raises (for example `TimeoutError`), the exception is propagated so you can decide how to handle it.
 
 ## Hosting with FastMCP
 
-Install dependencies via `uv sync` then start the server with the bundled script:
-
 ```bash
-uv run --script fastmcp-server -- --headed
+uv run fastmcp run browserbot/fastmcp_server.py
 ```
 
-- Omit `--headed` for headless mode (default).
-- The FastMCP server runs over STDIO and registers tools: `ensure_login`, `navigate`, `extract_text`, `click`, `open_session`, `session_goto`, `session_extract_text`, `session_click`, and `close_session`.
+Switch to headed mode before starting the server if desired:
+
+```python
+from browserbot.fastmcp_server import configure_browser_agent
+
+configure_browser_agent(headless=False)
+```
+
+### Registered Tools
+
+- `navigate`
+- `list_links`
+- `extract_text`
+- `click`
+- `take_screenshot`
+
+Each tool returns the underlying result or a structured error dictionary (`{"error": "...", "operation": "...", "message": "..."}`) when Playwright raises.
 
 ## Development Notes
 
-- All sources live under `browserbot/`; the flattened `agentkit.py` contains both the browser orchestration logic and the MCP adapter.
-- Timeout handling is uniform across tools—inspect the returned dictionary before proceeding.
-- To update Playwright binaries or dependencies, run `uv sync` and `uv run playwright install chromium` again.
+- Source lives under `browserbot/`. `agentkit.py` holds the browser helper and `fastmcp_server.py` registers MCP tools.
+- The codebase keeps concurrency simple: the FastMCP adapter serialises Playwright access behind a thread lock and executes synchronous Playwright calls on a background thread.
+- Additions should follow the same pattern: implement a helper on `BrowserAgent`, document it with a short docstring, then expose it via FastMCP.
