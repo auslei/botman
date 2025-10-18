@@ -12,6 +12,7 @@ dependencies = [
     "pyautogui>=0.9.54",
     "fastmcp>=0.1.0",
     "mcp[cli]>=1.17.0",
+    "openai-agents>=0.1.0",
 ]
 
 [tool.uv]

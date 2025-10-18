@@ -15,7 +15,7 @@ Requires-Dist: openai-agents>=0.1.0
 
 # Botman Browser Agent Kit
 
-`botman` ships a small set of Playwright-powered helpers that are easy to embed in autonomous agents. The codebase favours clarity over breadth: a single `BrowserAgent` class wraps the Playwright sync API and a FastMCP adapter exposes those helpers as tools.
+`botman` ships a small set of Playwright-powered helpers that are easy to embed in autonomous agents. The codebase now favours clarity over breadth: a single `BrowserAgent` class wraps the Playwright sync API and a FastMCP adapter exposes those helpers as tools.
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ Requires-Dist: openai-agents>=0.1.0
 
 ```bash
 uv sync
-uv run playwright install chromium
+uv run playwright install chromium  # downloads Chromium the first time
 ```
 
 ## Using the BrowserAgent Directly
@@ -48,13 +48,15 @@ with create_agent(headless=False) as agent:
 
 Every helper opens a fresh browser context, performs the requested action, and closes the context again. If Playwright raises (for example `TimeoutError`), the exception is propagated so you can decide how to handle it.
 
-## Hosting with FastMCP
+## Hosting the Tools with FastMCP
+
+The FastMCP wrapper runs the same helpers behind a lightweight STDIO server.
 
 ```bash
 uv run fastmcp run browserbot/fastmcp_server.py
 ```
 
-Switch to headed mode before starting the server if desired:
+Switch to headed mode before starting the server, if desired:
 
 ```python
 from browserbot.fastmcp_server import configure_browser_agent
@@ -64,13 +66,23 @@ configure_browser_agent(headless=False)
 
 ### Registered Tools
 
-- `navigate`
-- `list_links`
-- `extract_text`
-- `click`
-- `take_screenshot`
+The MCP surface intentionally mirrors the `BrowserAgent` methods:
+
+- `navigate(url, wait_until="load")`
+- `list_links(url, wait_until="load", limit=200, root_selector=None, link_selector=None)`
+- `extract_text(url, selector, wait_until="load", timeout_ms=None)`
+- `click(url, selector, wait_until="load", timeout_ms=None, post_wait="networkidle")`
+- `take_screenshot(url, wait_until="load", selector=None, full_page=True, image_format="png", quality=None)`
 
 Each tool returns the underlying result or a structured error dictionary (`{"error": "...", "operation": "...", "message": "..."}`) when Playwright raises.
+
+### Installing in MCP Clients
+
+```bash
+uv run fastmcp install claude-desktop browserbot/fastmcp_server.py --project /path/to/botman
+```
+
+Adjust the client target (`claude-desktop`, `claude-code`, `mcp-json`, etc.) and project path as needed.
 
 ## Development Notes
 
