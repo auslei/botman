@@ -11,5 +11,6 @@ browserbot/agentkit.py
 browserbot/fastmcp_server.py
 browserbot/sample_agent.py
 browserbot/sample_code.py
+browserbot/sample_langchain.py
 browserbot/sample_mcp_client.py
 guibot/autogui.py

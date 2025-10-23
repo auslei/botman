@@ -1,35 +1,39 @@
-"""FastMCP server that exposes the lightweight BrowserAgent helpers."""
+"""FastMCP server that exposes the lightweight BrowserBot helpers."""
 
 from __future__ import annotations
 
 import asyncio
 from threading import Lock
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from fastmcp import FastMCP
 from playwright.sync_api import Error, TimeoutError
 
-from browserbot.agentkit import BrowserAgent, create_agent
+from browserbot.browser_bot import BrowserBot, create_browserbot
 
 mcp = FastMCP(name="browserbot-agent")
 
 _agent_lock = Lock()
-_agent: BrowserAgent = create_agent()
+_agent: BrowserBot = create_browserbot()
 
 
-def configure_browser_agent(*, headless: bool = True) -> None:
-    """Recreate the BrowserAgent with the desired headless setting."""
+def configure_browser_agent(
+    *,
+    headless: bool = True,
+    persist_context: bool = False,
+) -> None:
+    """Recreate the BrowserBot with the desired headless/persistence settings."""
     global _agent
     with _agent_lock:
         try:
             _agent.shutdown()
         except Exception:
             pass
-        _agent = BrowserAgent(headless=headless)
+        _agent = BrowserBot(headless=headless, persist_context=persist_context)
 
 
 def _call_agent(method: str, *args, **kwargs) -> Dict[str, Any]:
-    """Invoke ``BrowserAgent`` methods inside a thread-safe section."""
+    """Invoke ``BrowserBot`` methods inside a thread-safe section."""
     with _agent_lock:
         agent_method = getattr(_agent, method)
         return agent_method(*args, **kwargs)
@@ -58,7 +62,7 @@ async def navigate(url: str, wait_until: str = "load") -> Dict[str, Any]:
 
 @mcp.tool
 async def list_links(
-    url: str,
+    url: Optional[str] = None,
     wait_until: str = "load",
     limit: Optional[int] = 200,
     root_selector: Optional[str] = None,
@@ -77,7 +81,8 @@ async def list_links(
 
 @mcp.tool
 async def extract_text(
-    url: str,
+    url: Optional[str] = None,
+    *,
     selector: str,
     wait_until: str = "load",
     timeout_ms: Optional[int] = None,
@@ -86,15 +91,35 @@ async def extract_text(
     return await _run_agent(
         "extract_text",
         url,
-        selector,
+        selector=selector,
         wait_until=wait_until,
         timeout_ms=timeout_ms,
     )
 
 
 @mcp.tool
+async def extract_html(
+    url: Optional[str] = None,
+    wait_until: str = "load",
+    selector: Optional[str] = None,
+    timeout_ms: Optional[int] = None,
+    inner: bool = False,
+) -> Dict[str, Any]:
+    """Return raw HTML for the page or a specific selector."""
+    return await _run_agent(
+        "extract_html",
+        url,
+        wait_until=wait_until,
+        selector=selector,
+        timeout_ms=timeout_ms,
+        inner=inner,
+    )
+
+
+@mcp.tool
 async def click(
-    url: str,
+    url: Optional[str] = None,
+    *,
     selector: str,
     wait_until: str = "load",
     timeout_ms: Optional[int] = None,
@@ -104,7 +129,7 @@ async def click(
     return await _run_agent(
         "click",
         url,
-        selector,
+        selector=selector,
         wait_until=wait_until,
         timeout_ms=timeout_ms,
         post_wait=post_wait,
@@ -112,8 +137,79 @@ async def click(
 
 
 @mcp.tool
+async def fill_fields(
+    url: Optional[str] = None,
+    *,
+    fields: Dict[str, Any] | Sequence[Any],
+    wait_until: str = "load",
+    timeout_ms: Optional[int] = None,
+    clear_existing: bool = True,
+) -> Dict[str, Any]:
+    """Populate one or more form fields."""
+    return await _run_agent(
+        "fill_fields",
+        url,
+        fields=fields,
+        wait_until=wait_until,
+        timeout_ms=timeout_ms,
+        clear_existing=clear_existing,
+    )
+
+
+@mcp.tool
+async def submit_form(
+    url: Optional[str] = None,
+    *,
+    form_selector: Optional[str] = None,
+    submit_selector: Optional[str] = None,
+    fields: Optional[Dict[str, Any] | Sequence[Any]] = None,
+    wait_until: str = "load",
+    timeout_ms: Optional[int] = None,
+    post_wait: Optional[str] = "networkidle",
+    wait_for: Optional[str] = None,
+    wait_for_state: str = "visible",
+    clear_existing: bool = True,
+) -> Dict[str, Any]:
+    """Fill optional fields and submit the targeted form."""
+    return await _run_agent(
+        "submit_form",
+        url,
+        form_selector=form_selector,
+        submit_selector=submit_selector,
+        fields=fields,
+        wait_until=wait_until,
+        timeout_ms=timeout_ms,
+        post_wait=post_wait,
+        wait_for=wait_for,
+        wait_for_state=wait_for_state,
+        clear_existing=clear_existing,
+    )
+
+
+@mcp.tool
+async def wait_for_selector(
+    url: Optional[str] = None,
+    *,
+    selector: str,
+    wait_until: str = "load",
+    timeout_ms: Optional[int] = None,
+    state: str = "visible",
+) -> Dict[str, Any]:
+    """Wait until the selector reaches the requested state."""
+    return await _run_agent(
+        "wait_for_selector",
+        url,
+        selector=selector,
+        wait_until=wait_until,
+        timeout_ms=timeout_ms,
+        state=state,
+    )
+
+
+@mcp.tool
 async def take_screenshot(
-    url: str,
+    url: Optional[str] = None,
+    *,
     wait_until: str = "load",
     selector: Optional[str] = None,
     full_page: bool = True,
@@ -138,6 +234,10 @@ __all__ = [
     "navigate",
     "list_links",
     "extract_text",
+    "extract_html",
     "click",
+    "fill_fields",
+    "submit_form",
+    "wait_for_selector",
     "take_screenshot",
 ]

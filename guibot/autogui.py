@@ -5,54 +5,74 @@ import numpy as np
 from PIL import Image
 import time
 
-# Optional: Set tesseract path manually if not in PATH
-pytesseract.pytesseract.tesseract_cmd = 'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
 
-def find_text_on_screen(text, region=None, confidence=0.8):
-    screenshot = pyautogui.screenshot(region=region)
-    image = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+class GUIAgent:
+    def __init__(self, pytesseract_path=None):
+        if pytesseract_path:
+            pytesseract.pytesseract.tesseract_cmd = pytesseract_path
+        else:
+            # if it is windows, set default path
+            import platform
+            if platform.system() == "Windows":
+                pytesseract.pytesseract.tesseract_cmd = 'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'  
+            else:
+                pytesseract.pytesseract.tesseract_cmd = 'tesseract'
+    
+    def find_text_on_screen(self, text, region=None, confidence=0.8):
+        """Find text on the screen using OCR and click it."""
+        screenshot = pyautogui.screenshot(region=region)
+        
+        # Convert screenshot to OpenCV format
+        image = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR) 
 
-    # Use OCR to extract text + bounding boxes
-    data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+        # Use OCR to extract text + bounding boxes
+        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
 
-    for i, word in enumerate(data["text"]):
-        if word.strip().lower() == text.lower():
-            x, y, w, h = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
-            print(f"Found '{text}' at ({x},{y})")
-            pyautogui.click(x + w // 2, y + h // 2)
+        # Iterate through detected text
+        for i, word in enumerate(data["text"]):
+            if word.strip().lower() == text.lower():
+                x, y, w, h = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
+                print(f"Found '{text}' at ({x},{y})")
+                pyautogui.click(x + w // 2, y + h // 2)
+                return True
+        return False
+
+
+    def click_image_on_screen(self, image_path, confidence=0.8):
+        """Find an image on the screen and click it."""
+        location = pyautogui.locateCenterOnScreen(image_path, confidence=confidence)
+        if location:
+            print(f"Found image at {location}")
+            pyautogui.click(location)
             return True
-    return False
+        return False
+    
+    def type_text(self, text, interval=0.05):
+        """Type text into the active window."""
+        pyautogui.write(text, interval=interval)
+        
+    def press_key(self, key):
+        """Press a single key."""
+        pyautogui.press(key)
+        
+    def hotkey(self, *keys):
+        """Press a combination of keys."""
+        pyautogui.hotkey(*keys) 
+        
+    def wait(self, seconds):
+        """Wait for a specified number of seconds."""
+        time.sleep(seconds)
+        
+    def screenshot_region(self, region, save_path):
+        """Take a screenshot of a specific region."""
+        screenshot = pyautogui.screenshot(region=region)
+        screenshot.save(save_path)
+        
+    def scroll(self, clicks):
+        """Scroll the mouse wheel."""
+        pyautogui.scroll(clicks)
+        
+# Example usage:  
+agent = GUIAgent()
 
-def open_outlook_via_taskbar_or_start():
-    print("Looking for Outlook on taskbar...")
-    if find_text_on_screen("Outlook", region=(0, 1000, 1920, 80)):  # Adjust for taskbar area
-        print("Clicked Outlook from taskbar.")
-    else:
-        print("Didn't find on taskbar. Using Start Menu...")
-        pyautogui.press('win')
-        time.sleep(1)
-        pyautogui.write("Outlook", interval=0.1)
-        time.sleep(1)
-        pyautogui.press("enter")
-
-def wait_for_window(keyword="Inbox", timeout=15):
-    print("Waiting for Outlook to open...")
-    for _ in range(timeout):
-        if find_text_on_screen(keyword):
-            print(f"Detected '{keyword}' — Outlook likely opened.")
-            return True
-        time.sleep(1)
-    print("Timeout. Could not confirm Outlook is open.")
-    return False
-
-def click_first_email():
-    print("Attempting to select first email...")
-    if find_text_on_screen("Inbox"):  # fallback example, you may capture actual first email text
-        print("Clicked near 'Inbox' area.")
-    else:
-        print("Could not find first email to click.")
-
-if __name__ == "__main__":
-    open_outlook_via_taskbar_or_start()
-    if wait_for_window("Inbox"):
-        click_first_email()
+agent.find_text_on_screen("Code")

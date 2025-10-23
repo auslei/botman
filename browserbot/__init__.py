@@ -2,4 +2,6 @@
 
 from __future__ import annotations
 
-#__all__ = ["agentkit", "fastmcp_server"]
+from .browser_bot import BrowserBot, create_browserbot
+
+__all__ = ["BrowserBot", "create_browserbot"]

@@ -12,6 +12,15 @@ Requires-Dist: pyautogui>=0.9.54
 Requires-Dist: fastmcp>=0.1.0
 Requires-Dist: mcp[cli]>=1.17.0
 Requires-Dist: openai-agents>=0.1.0
+Requires-Dist: langchain>=0.2.0
+Requires-Dist: langchain-community>=0.2.0
+Requires-Dist: langchain-core>=0.2.0
+Requires-Dist: langgraph>=0.2.0
+Requires-Dist: langchain-openai>=0.1.0
+Requires-Dist: langchain-ollama>=1.0.0
+Requires-Dist: langchain-deepseek>=1.0.0
+Requires-Dist: pytesseract>=0.3.13
+Requires-Dist: langchain-mcp-adapters>=0.1.11
 
 # Botman Browser Agent Kit
 
@@ -71,7 +80,11 @@ The MCP surface intentionally mirrors the `BrowserAgent` methods:
 - `navigate(url, wait_until="load")`
 - `list_links(url, wait_until="load", limit=200, root_selector=None, link_selector=None)`
 - `extract_text(url, selector, wait_until="load", timeout_ms=None)`
+- `extract_html(url, wait_until="load", selector=None, timeout_ms=None, inner=False)`
 - `click(url, selector, wait_until="load", timeout_ms=None, post_wait="networkidle")`
+- `fill_fields(url, fields, wait_until="load", timeout_ms=None, clear_existing=True)`
+- `submit_form(url, form_selector=None, submit_selector=None, fields=None, wait_until="load", timeout_ms=None, post_wait="networkidle", wait_for=None, wait_for_state="visible", clear_existing=True)`
+- `wait_for_selector(url, selector, wait_until="load", timeout_ms=None, state="visible")`
 - `take_screenshot(url, wait_until="load", selector=None, full_page=True, image_format="png", quality=None)`
 
 Each tool returns the underlying result or a structured error dictionary (`{"error": "...", "operation": "...", "message": "..."}`) when Playwright raises.

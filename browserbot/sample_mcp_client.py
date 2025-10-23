@@ -1,15 +1,18 @@
 import asyncio
 from fastmcp import Client, FastMCP
 
-# In-memory server (ideal for testing)
+# Option 1: In-memory server (for testing - create some tools first)
 server = FastMCP("TestServer")
+
+@server.tool()
+def test_tool(message: str) -> str:
+    """A simple test tool."""
+    return f"Test response: {message}"
+
 client = Client(server)
 
-# HTTP server
-#client = Client("https://example.com/mcp")
-
-# Local Python script
-client = Client("browserbot/fastmcp_server.py")
+# Option 2: For external MCP server, use subprocess approach
+# This would require a different client setup - let's stick with in-memory for now
 
 async def main():
     async with client:
