@@ -30,7 +30,7 @@ async def main():
                 "fastmcp",
                 "fastmcp",
                 "run",
-                "G:\\dev\\botman\\browserbot\\fastmcp_server.py"
+                "G:\\dev\\botman\\botman\\mcp\\server.py"
             ],
         }
     ) as mcp_server:

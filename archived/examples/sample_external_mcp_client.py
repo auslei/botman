@@ -18,7 +18,7 @@ async def main():
             "fastmcp",
             "fastmcp",
             "run",
-            "./browserbot/fastmcp_server.py"
+            "./botman/mcp/server.py"
         ]
     )
     

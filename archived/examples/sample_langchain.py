@@ -99,7 +99,7 @@ async def main() -> None:
     """Entry point for running the sample agent."""
     client = MultiServerMCPClient(
         {
-            "browserbot": {
+            "botman": {
                 "transport": "stdio",
                 "command": "uv",
                 "args": [
@@ -110,13 +110,13 @@ async def main() -> None:
                     "fastmcp",
                     "fastmcp",
                     "run",
-                    "./browserbot/fastmcp_server.py",
+                    "./botman/mcp/server.py",
                 ],
             }
         }
     ) 
 
-    async with client.session("browserbot") as session:
+    async with client.session("botman") as session:
         mcp_tools = await client.get_tools()
         tools = [get_weather, get_user_location, *mcp_tools]
 
