@@ -36,3 +36,7 @@ namespaces = false
 
 [project.scripts]
 fastmcp-server = "botman.mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
