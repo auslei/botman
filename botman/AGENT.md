@@ -33,7 +33,7 @@ sessions.
 
 - Local testing: `uv run fastmcp run botman/mcp/server.py`
 - FastMCP Cloud / HTTP: reference `botman:app`
-- Inspection: `fastmcp inspect botman/mcp/server.py:mcp`
+- Inspection: `fastmcp inspect mcp_server.py:mcp`
 
 ## Keeping Tooling Current
 

@@ -57,7 +57,7 @@ FastMCP Cloud expects a module path and server object. The Botman tree exposes t
 before uploading:
 
 ```bash
-fastmcp inspect botman/mcp/server.py:mcp
+fastmcp inspect mcp_server.py:mcp
 ```
 
 To run as an ASGI app (for cloud hosting or custom infrastructure), point your
