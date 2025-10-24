@@ -13,7 +13,9 @@ from __future__ import annotations
 import base64
 import logging
 from contextlib import AbstractContextManager, contextmanager
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+from urllib.parse import urlparse
 
 from playwright.sync_api import (
     Browser,
@@ -23,6 +25,8 @@ from playwright.sync_api import (
     Playwright,
     sync_playwright,
 )
+
+from .auth import DomainConfig, default_domain_configs
 
 ALLOWED_WAIT_STATES = {"load", "domcontentloaded", "networkidle"}
 ALLOWED_SELECTOR_STATES = {"attached", "detached", "visible", "hidden"}
@@ -48,6 +52,7 @@ class BrowserBot(AbstractContextManager["BrowserBot"]):
         launch_args: Optional[Sequence[str]] = None,
         default_timeout_ms: int = 5000,
         persist_context: bool = False,
+        domain_configs: Optional[Mapping[str, DomainConfig]] = None,
     ) -> None:
         self._headless = headless
         self._launch_args = tuple(launch_args or ())
@@ -57,6 +62,17 @@ class BrowserBot(AbstractContextManager["BrowserBot"]):
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._page: Page | None = None
+        self._domain_configs: Dict[str, DomainConfig] = dict(
+            domain_configs or default_domain_configs()
+        )
+        for cfg in self._domain_configs.values():
+            cfg.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._storage_state_cache: Dict[str, Path] = {
+            domain: cfg.storage_state_path
+            for domain, cfg in self._domain_configs.items()
+            if cfg.storage_state_path.exists()
+        }
+        self._current_storage_state_key: Optional[str] = None
 
     # ------------------------------------------------------------------ #
     # Lifecycle helpers
@@ -81,21 +97,8 @@ class BrowserBot(AbstractContextManager["BrowserBot"]):
 
     def shutdown(self) -> None:
         """Close Chromium and release Playwright resources."""
-        if self._page is not None:
-            try:
-                if not self._page.is_closed():
-                    self._page.close()
-            except Exception:
-                pass
-            finally:
-                self._page = None
-        if self._context is not None:
-            try:
-                self._context.close()
-            except Exception:
-                pass
-            finally:
-                self._context = None
+        self._close_persistent_context()
+        self._current_storage_state_key = None
         if self._browser is not None:
             self._browser.close()
             self._browser = None
@@ -106,6 +109,36 @@ class BrowserBot(AbstractContextManager["BrowserBot"]):
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
+
+    def ensure_login(self, domain: str, *, force: bool = False) -> Dict[str, Any]:
+        """Ensure a cached Playwright storage state exists for ``domain``."""
+
+        config = self._domain_configs.get(domain)
+        if config is None:
+            raise ValueError(f"No authentication configuration for {domain!r}.")
+
+        storage_path = config.storage_state_path
+        if not force and storage_path.exists():
+            self._storage_state_cache[domain] = storage_path
+            return {
+                "domain": domain,
+                "storage_state": str(storage_path),
+                "created": False,
+            }
+
+        self._run_manual_login(config)
+        if storage_path.exists():
+            self._storage_state_cache[domain] = storage_path
+            self._invalidate_persistent_context()
+            return {
+                "domain": domain,
+                "storage_state": str(storage_path),
+                "created": True,
+            }
+
+        raise RuntimeError(
+            f"Manual login for {domain!r} did not populate {storage_path}."
+        )
 
     def navigate(self, url: str, *, wait_until: str = "load") -> Dict[str, str]:
         """Navigate to ``url`` and return the final URL and page title."""
@@ -996,12 +1029,77 @@ class BrowserBot(AbstractContextManager["BrowserBot"]):
             raise ValueError("Select option mappings must include 'value', 'label', or 'index'.")
         return normalized
 
+    def _storage_state_for_url(self, url: Optional[str]) -> Optional[Path]:
+        if not url:
+            return None
+        host = urlparse(url).hostname
+        if not host:
+            return None
+        return self._storage_state_for_host(host)
+
+    def _storage_state_for_host(self, host: str) -> Optional[Path]:
+        candidate = host.lower()
+        while candidate:
+            cfg = self._domain_configs.get(candidate)
+            if cfg:
+                path = cfg.storage_state_path
+                if path.exists():
+                    self._storage_state_cache[candidate] = path
+                    return path
+            if "." not in candidate:
+                break
+            candidate = candidate.split(".", 1)[1]
+        return None
+
+    def _run_manual_login(self, config: DomainConfig) -> None:
+        from playwright.sync_api import sync_playwright
+
+        logger.info("Starting manual login for domain %s", config.domain)
+        print(config.instructions)
+        with sync_playwright() as playwright:
+            launch_kwargs = dict(config.launch_options)
+            headless = launch_kwargs.pop("headless", False)
+            browser = playwright.chromium.launch(headless=headless, **launch_kwargs)
+            try:
+                context = browser.new_context(**config.context_options)
+                page = context.new_page()
+                page.goto(config.login_url)
+                input("Press Enter after the login completes...")
+                context.storage_state(path=str(config.storage_state_path))
+            finally:
+                browser.close()
+        logger.info(
+            "Stored session for %s at %s", config.domain, config.storage_state_path
+        )
+
+    def _invalidate_persistent_context(self) -> None:
+        self._close_persistent_context()
+        self._current_storage_state_key = None
+
+    def _close_persistent_context(self) -> None:
+        if self._page is not None:
+            try:
+                if not self._page.is_closed():
+                    self._page.close()
+            except Exception:
+                pass
+            finally:
+                self._page = None
+        if self._context is not None:
+            try:
+                self._context.close()
+            except Exception:
+                pass
+            finally:
+                self._context = None
+
 
     @contextmanager
     def _open_page(self, url: Optional[str], *, wait_until: str) -> Iterator[Page]:
         wait_state = self._validate_wait_state(wait_until)
+        storage_state = self._storage_state_for_url(url)
         if self._persist_context:
-            page = self._ensure_persistent_page()
+            page = self._ensure_persistent_page(storage_state)
             if url:
                 target = url.strip()
                 if not target:
@@ -1024,7 +1122,9 @@ class BrowserBot(AbstractContextManager["BrowserBot"]):
             if not target:
                 raise ValueError("url must be a non-empty string.")
             browser = self._ensure_browser()
-            context = browser.new_context()
+            context = browser.new_context(
+                storage_state=str(storage_state) if storage_state else None
+            )
             page = context.new_page()
             try:
                 page.goto(target, wait_until=wait_state)
@@ -1032,20 +1132,29 @@ class BrowserBot(AbstractContextManager["BrowserBot"]):
             finally:
                 context.close()
 
-    def _ensure_persistent_page(self) -> Page:
+    def _ensure_persistent_page(self, storage_state: Optional[Path]) -> Page:
         browser = self._ensure_browser()
-        if self._context is None:
-            self._context = browser.new_context()
+        storage_key = str(storage_state) if storage_state else None
+        needs_new_context = (
+            self._context is None
+            or self._page is None
+            or self._page.is_closed()
+            or self._current_storage_state_key != storage_key
+        )
+        if needs_new_context:
+            self._close_persistent_context()
+            state_arg = str(storage_state) if storage_state and storage_state.exists() else None
+            self._context = browser.new_context(storage_state=state_arg)
             try:
                 self._context.set_default_timeout(self._default_timeout_ms)
             except Exception:
                 pass
-        if self._page is None or self._page.is_closed():
             self._page = self._context.new_page()
             try:
                 self._page.set_default_timeout(self._default_timeout_ms)
             except Exception:
                 pass
+            self._current_storage_state_key = storage_key
         return self._page
 
     def _urls_differ(self, current: str, target: str) -> bool:
@@ -1132,9 +1241,14 @@ def create_browserbot(
     *,
     headless: bool = True,
     persist_context: bool = False,
+    domain_configs: Optional[Mapping[str, DomainConfig]] = None,
 ) -> BrowserBot:
     """Factory helper for parity with existing usage sites."""
-    return BrowserBot(headless=headless, persist_context=persist_context)
+    return BrowserBot(
+        headless=headless,
+        persist_context=persist_context,
+        domain_configs=domain_configs,
+    )
 
 
 __all__ = ["BrowserBot", "create_browserbot"]

@@ -81,6 +81,7 @@ The MCP surface intentionally mirrors the `BrowserBot` methods:
 - `list_buttons(url=None, wait_until="load")`
 - `evaluate_js(script, url=None, wait_until="load", arg=None)`
 - `take_screenshot(url=None, wait_until="load", selector=None, full_page=True, image_format="png", quality=None)`
+- `ensure_login(domain, force=False)`
 
 Each tool returns the underlying result or a structured error dictionary (`{"error": "...", "operation": "...", "message": "..."}`) when Playwright raises.
 
@@ -105,3 +106,31 @@ Adjust the client target (`claude-desktop`, `claude-code`, `mcp-json`, etc.) and
 - When you need up-to-date FastMCP or LangChain information, use Context7 (e.g.
   `context7 resolve fastmcp` followed by `context7 docs ...`) so the agent is
   always aligned with the latest upstream changes.
+
+## Priming Authenticated Sessions
+
+Some workflows require a logged-in browser (for example Gmail). Call the
+`ensure_login` tool with a supported domain before issuing other actions:
+
+```bash
+fastmcp inspect mcp_server.py:mcp  # validate
+uv run fastmcp call ensure_login '{"domain": "mail.google.com"}'
+```
+
+The server opens a headed Chrome window with stealthy launch flags. Complete the
+login manually (including MFA) and return to the terminal; the resulting storage
+state is cached under `botman/browser/storage/`. Subsequent calls that visit the
+same domain automatically reuse the saved session thanks to
+`persist_context=True`.
+
+Alternatively, run the helper script directly:
+
+```bash
+uv run scripts/ensure_login.py mail.google.com
+```
+
+> **Note**: The manual login flow opens a headed Chrome window and requires
+> human interaction. This is practical for local development (stdio transport)
+> but not for remote FastMCP deployments where no UI is available. For remote
+> hosting you should bake the storage state offline and ship it with the server
+> or rely on a fully scripted headless login if the target site allows it.

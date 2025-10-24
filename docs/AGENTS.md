@@ -32,6 +32,7 @@ with create_browserbot(headless=False, persist_context=True) as agent:
 
 Available tools today:
 
+- `ensure_login`
 - `navigate`
 - `list_links`
 - `extract_text`
@@ -64,5 +65,9 @@ from fastmcp.server import run_application
 configure_browser_agent(headless=False, persist_context=True)
 run_application(mcp)
 ```
+
+Call `ensure_login("mail.google.com")` once to cache a Gmail session before
+running tasks that rely on authenticated access; the storage state is saved to
+`botman/browser/storage/` and reused automatically.
 
 This arrangement keeps the codebase approachable while leaving room to add more tools if they become necessary. Each new helper should live on `BrowserBot` and be registered in the FastMCP layer with a short docstring describing its behaviour.

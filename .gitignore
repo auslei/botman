@@ -15,6 +15,7 @@ test-results/
 # Local state
 browserbot/tmp/
 tmp/
+botman/browser/storage/
 
 # OS junk
 .DS_Store

@@ -114,6 +114,22 @@ def _client_id_from_context(ctx: Optional[Context]) -> Optional[str]:
 
 
 @mcp.tool
+async def ensure_login(
+    domain: str,
+    *,
+    force: bool = False,
+    ctx: Optional[Context] = None,
+) -> Dict[str, Any]:
+    """Ensure an authenticated session is cached for ``domain``."""
+    return await _run_agent(
+        "ensure_login",
+        domain,
+        force=force,
+        client_id=_client_id_from_context(ctx),
+    )
+
+
+@mcp.tool
 async def navigate(
     url: str,
     *,
@@ -410,6 +426,7 @@ def main() -> None:
 __all__ = [
     "mcp",
     "configure_browser_agent",
+    "ensure_login",
     "navigate",
     "list_links",
     "extract_text",

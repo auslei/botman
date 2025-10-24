@@ -15,6 +15,8 @@ package so future changes are easy to reason about.
   or other HTTP deployments.
 - `botman/__init__.py` — Re-exports both the browser helpers and the MCP server
   so consumers can stick with `import botman`.
+- `botman/browser/auth.py` — domain-specific login configuration (currently
+  Gmail) used by the `ensure_login` helper.
 
 Legacy imports continue to work because `browserbot/browser_bot.py` re-exports
 from `botman.browser`.  The old sample scripts were archived under
@@ -28,6 +30,11 @@ client therefore keeps its own persistent Playwright context (cookies, DOM
 state, etc.) while still running synchronously to satisfy Playwright’s thread
 constraints.  `configure_browser_agent()` updates defaults and resets all
 sessions.
+
+`BrowserBot.ensure_login(domain)` drives a headed manual login flow (Chrome with
+stealth launch flags) and saves the storage state to `botman/browser/storage/`.
+When a subsequent navigation targets the same domain, the cached state is loaded
+automatically so callers operate on an authenticated session.
 
 ## Deployment Paths
 
