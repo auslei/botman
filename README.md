@@ -61,7 +61,7 @@ fastmcp inspect botman/mcp/server.py:mcp
 ```
 
 To run as an ASGI app (for cloud hosting or custom infrastructure), point your
-server at `botman.app:app`.
+server at `botman:app`.
 
 ### Registered Tools
 

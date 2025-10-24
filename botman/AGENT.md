@@ -32,7 +32,7 @@ sessions.
 ## Deployment Paths
 
 - Local testing: `uv run fastmcp run botman/mcp/server.py`
-- FastMCP Cloud / HTTP: reference `botman/app:app`
+- FastMCP Cloud / HTTP: reference `botman:app`
 - Inspection: `fastmcp inspect botman/mcp/server.py:mcp`
 
 ## Keeping Tooling Current
